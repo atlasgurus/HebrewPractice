@@ -12,6 +12,8 @@ export default function LessonManager() {
   const [newLessonName, setNewLessonName] = useState('');
   const [newVerb, setNewVerb] = useState<Partial<Verb>>({ binyan: 'paal' });
   const [newNoun, setNewNoun] = useState<Partial<Noun>>({});
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const selected = lessons.find((l) => l.id === selectedId) ?? null;
@@ -77,24 +79,42 @@ export default function LessonManager() {
     updateSelected({ ...selected, nouns: selected.nouns.filter((_, i) => i !== index) });
   }
 
-  function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
-      try {
-        const lesson = file.name.endsWith('.json')
-          ? lessonService.importFromJson(text)
-          : lessonService.importFromText(text, file.name.replace(/\.[^.]+$/, ''));
-        refresh();
-        setSelectedId(lesson.id);
-      } catch {
-        alert('Failed to import file. Check the format.');
-      }
-    };
-    reader.readAsText(file);
     e.target.value = '';
+    setImporting(true);
+    setImportError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/lessons/import', { method: 'POST', body: formData });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error ?? 'Import failed');
+      }
+
+      const data = await res.json();
+      const lesson: Lesson = {
+        id: crypto.randomUUID(),
+        name: data.name ?? file.name.replace(/\.[^.]+$/, ''),
+        createdAt: new Date().toISOString(),
+        verbs: data.verbs ?? [],
+        nouns: data.nouns ?? [],
+      };
+      lessonService.update({ ...lesson }); // upsert via update (won't exist yet, use create path)
+      const saved = lessonService.create(lesson.name);
+      // replace the just-created empty lesson with the imported data
+      lessonService.update({ ...saved, verbs: lesson.verbs, nouns: lesson.nouns });
+      refresh();
+      setSelectedId(saved.id);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Import failed');
+    } finally {
+      setImporting(false);
+    }
   }
 
   function handleExport() {
@@ -155,21 +175,38 @@ export default function LessonManager() {
             <li className="px-3 py-4 text-xs text-gray-400 text-center">No lessons yet</li>
           )}
         </ul>
-        <div className="p-3 border-t border-gray-200 flex gap-1">
-          <input type="file" ref={fileRef} onChange={handleImport} accept=".json,.txt" className="hidden" />
+        <div className="p-3 border-t border-gray-200 space-y-1">
+          <input
+            type="file"
+            ref={fileRef}
+            onChange={handleImport}
+            accept="*/*"
+            className="hidden"
+          />
           <button
             onClick={() => fileRef.current?.click()}
-            className="flex-1 text-xs px-2 py-1.5 border border-gray-300 rounded hover:bg-gray-100 text-gray-600"
+            disabled={importing}
+            className="w-full text-xs px-2 py-1.5 border border-gray-300 rounded hover:bg-gray-100 text-gray-600 disabled:opacity-50 flex items-center justify-center gap-1"
           >
-            Import
+            {importing ? (
+              <>
+                <span className="inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin" />
+                Importing…
+              </>
+            ) : (
+              'Import file…'
+            )}
           </button>
           <button
             onClick={handleExport}
             disabled={!selected}
-            className="flex-1 text-xs px-2 py-1.5 border border-gray-300 rounded hover:bg-gray-100 text-gray-600 disabled:opacity-40"
+            className="w-full text-xs px-2 py-1.5 border border-gray-300 rounded hover:bg-gray-100 text-gray-600 disabled:opacity-40"
           >
-            Export
+            Export JSON
           </button>
+          {importError && (
+            <p className="text-xs text-red-500 mt-1">{importError}</p>
+          )}
         </div>
       </aside>
 
