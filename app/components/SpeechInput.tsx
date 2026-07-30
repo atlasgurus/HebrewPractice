@@ -6,10 +6,9 @@ import { WebSpeechAdapter } from '@/services/adapters/webSpeechAdapter';
 interface Props {
   onTranscript: (text: string) => void;
   disabled?: boolean;
-  autoStart?: boolean;
 }
 
-export default function SpeechInput({ onTranscript, disabled, autoStart }: Props) {
+export default function SpeechInput({ onTranscript, disabled }: Props) {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [supported, setSupported] = useState(true);
@@ -47,14 +46,6 @@ export default function SpeechInput({ onTranscript, disabled, autoStart }: Props
     adapterRef.current = adapter;
     return () => adapter.abort();
   }, []);
-
-  useEffect(() => {
-    if (autoStart && !disabled && !listening && supported) {
-      const timer = setTimeout(() => startListening(), 600);
-      return () => clearTimeout(timer);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoStart, disabled]);
 
   function startListening() {
     if (!adapterRef.current?.isSupported() || listening) return;

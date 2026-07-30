@@ -14,8 +14,20 @@ interface ISpeechRecognition extends EventTarget {
   abort(): void;
 }
 
+interface SpeechRecognitionResult {
+  readonly [index: number]: { transcript: string; confidence: number };
+  readonly isFinal: boolean;
+  readonly length: number;
+}
+
+interface SpeechRecognitionResultList {
+  readonly [index: number]: SpeechRecognitionResult;
+  readonly length: number;
+}
+
 interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
+  readonly resultIndex: number;
+  readonly results: SpeechRecognitionResultList;
 }
 
 interface SpeechRecognitionErrorEvent extends Event {
@@ -51,11 +63,18 @@ export class WebSpeechAdapter implements SpeechAdapter {
     this.recognition.lang = 'he-IL';
     this.recognition.interimResults = false;
     this.recognition.maxAlternatives = 1;
-    this.recognition.continuous = false;
+    this.recognition.continuous = true; // keep recording through pauses
+
+    let accumulated = '';
 
     this.recognition.onresult = (event: SpeechRecognitionEvent) => {
-      const transcript = event.results[0]?.[0]?.transcript ?? '';
-      this.onResult?.(transcript.trim());
+      // Append only the newly finalized phrase(s)
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          accumulated += (accumulated ? ' ' : '') + event.results[i][0].transcript.trim();
+        }
+      }
+      this.onResult?.(accumulated);
     };
 
     this.recognition.onend = () => {

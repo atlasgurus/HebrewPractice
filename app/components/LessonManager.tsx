@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Binyan, BINYAN_LABELS, Lesson, Noun, Verb } from '@/types';
 import { lessonService } from '@/services/lessonService';
 
@@ -14,7 +14,9 @@ export default function LessonManager() {
   const [newNoun, setNewNoun] = useState<Partial<Noun>>({});
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [pasteMode, setPasteMode] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pasteName, setPasteName] = useState('');
 
   const selected = lessons.find((l) => l.id === selectedId) ?? null;
 
@@ -79,13 +81,9 @@ export default function LessonManager() {
     updateSelected({ ...selected, nouns: selected.nouns.filter((_, i) => i !== index) });
   }
 
-  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = '';
+  async function submitImport(file: File, fallbackName: string) {
     setImporting(true);
     setImportError(null);
-
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -97,17 +95,8 @@ export default function LessonManager() {
       }
 
       const data = await res.json();
-      const lesson: Lesson = {
-        id: crypto.randomUUID(),
-        name: data.name ?? file.name.replace(/\.[^.]+$/, ''),
-        createdAt: new Date().toISOString(),
-        verbs: data.verbs ?? [],
-        nouns: data.nouns ?? [],
-      };
-      lessonService.update({ ...lesson }); // upsert via update (won't exist yet, use create path)
-      const saved = lessonService.create(lesson.name);
-      // replace the just-created empty lesson with the imported data
-      lessonService.update({ ...saved, verbs: lesson.verbs, nouns: lesson.nouns });
+      const saved = lessonService.create(data.name ?? fallbackName);
+      lessonService.update({ ...saved, verbs: data.verbs ?? [], nouns: data.nouns ?? [] });
       refresh();
       setSelectedId(saved.id);
     } catch (err) {
@@ -115,6 +104,25 @@ export default function LessonManager() {
     } finally {
       setImporting(false);
     }
+  }
+
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    await submitImport(file, file.name.replace(/\.[^.]+$/, ''));
+  }
+
+  async function handlePasteImport() {
+    const text = pasteText.trim();
+    if (!text) return;
+    const name = pasteName.trim() || `Pasted lesson ${new Date().toLocaleDateString()}`;
+    const blob = new Blob([text], { type: 'text/plain' });
+    const file = new File([blob], `${name}.txt`, { type: 'text/plain' });
+    await submitImport(file, name);
+    setPasteMode(false);
+    setPasteText('');
+    setPasteName('');
   }
 
   function handleExport() {
@@ -164,7 +172,7 @@ export default function LessonManager() {
               <span className="flex-1 truncate">{l.name}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); deleteLesson(l.id); }}
-                className="text-gray-300 hover:text-red-500 ml-1 flex-shrink-0"
+                className="text-gray-400 hover:text-red-500 ml-1 flex-shrink-0"
                 aria-label="Delete lesson"
               >
                 ×
@@ -176,17 +184,8 @@ export default function LessonManager() {
           )}
         </ul>
         <div className="p-3 border-t border-gray-200 space-y-1">
-          <input
-            type="file"
-            ref={fileRef}
-            onChange={handleImport}
-            accept="*/*"
-            className="hidden"
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={importing}
-            className="w-full text-xs px-2 py-1.5 border border-gray-300 rounded hover:bg-gray-100 text-gray-600 disabled:opacity-50 flex items-center justify-center gap-1"
+          <label
+            className={`w-full text-xs px-2 py-1.5 border border-gray-300 rounded hover:bg-gray-100 text-gray-600 flex items-center justify-center gap-1 cursor-pointer ${importing ? 'opacity-50 pointer-events-none' : ''}`}
           >
             {importing ? (
               <>
@@ -196,6 +195,19 @@ export default function LessonManager() {
             ) : (
               'Import file…'
             )}
+            <input
+              type="file"
+              onChange={handleImport}
+              disabled={importing}
+              className="sr-only"
+            />
+          </label>
+          <button
+            onClick={() => setPasteMode(true)}
+            disabled={importing}
+            className="w-full text-xs px-2 py-1.5 border border-gray-300 rounded hover:bg-gray-100 text-gray-600 disabled:opacity-40"
+          >
+            Paste text…
           </button>
           <button
             onClick={handleExport}
@@ -342,6 +354,61 @@ export default function LessonManager() {
         <main className="flex-1 flex items-center justify-center text-gray-400 text-sm">
           Create or select a lesson to get started.
         </main>
+      )}
+
+      {/* Paste-text modal */}
+      {pasteMode && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => !importing && setPasteMode(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-full max-w-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-gray-200">
+              <h2 className="font-semibold text-gray-800">Paste vocabulary list</h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Paste a Hebrew word list in any format — Claude will parse it.
+              </p>
+            </div>
+            <div className="p-4 space-y-3">
+              <input
+                value={pasteName}
+                onChange={(e) => setPasteName(e.target.value)}
+                placeholder="Lesson name (optional)"
+                className="w-full text-sm border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+              <textarea
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                placeholder="Paste your vocabulary here…"
+                rows={14}
+                dir="auto"
+                className="w-full text-sm font-mono border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400 resize-y"
+              />
+            </div>
+            <div className="p-4 border-t border-gray-200 flex justify-end gap-2">
+              <button
+                onClick={() => { setPasteMode(false); setPasteText(''); setPasteName(''); }}
+                disabled={importing}
+                className="px-4 py-1.5 text-sm rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePasteImport}
+                disabled={importing || !pasteText.trim()}
+                className="px-4 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {importing && (
+                  <span className="inline-block w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
+                )}
+                {importing ? 'Importing…' : 'Import'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
